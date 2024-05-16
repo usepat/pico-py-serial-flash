@@ -8,7 +8,7 @@ def usage_flasher():
 
 # Wrapper function to be able to easily disable/alter all debugging string output.
 def debug(self, *args):
-    # print(self, *args, sep=' ', end='\n', file=None)
+    print(self, *args, sep=' ', end='\n', file=None)
     pass
 
 

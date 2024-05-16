@@ -40,7 +40,7 @@ def Program(conn, image: Image, progress_bar):
 
     debug("pad_len: " + str(pad_len))
     debug("pad_zeros: " + str(hex_bytes_to_int(pad_zeros)))
-    debug("data: " + str(data))
+    #debug("data: " + str(data))
     # debug("Data readable: " + str(data_ints))
 
     if image.Addr < device_info.flash_addr:

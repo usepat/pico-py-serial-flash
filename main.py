@@ -51,7 +51,7 @@ def run(_sys_args):
             puts(usage_flasher())
             exit_prog(True)
         img = load_elf(file_path)
-        debug("Returned .elf address: " + str(img.Addr) + " and data: " + str(img.Data))
+        #debug("Returned .elf address: " + str(img.Addr) + " and data: " + str(img.Data))
         debug("ELF Image Data List Length: " + str(len(img.Data)))
         debug("")
 
@@ -73,7 +73,7 @@ def run(_sys_args):
         exit_prog(True)
 
     debug("Base addr: " + str(base_addr))
-    debug("Img data: " + str(img.Data))
+    #debug("Img data: " + str(img.Data))
 
     conn = None
 
@@ -86,7 +86,7 @@ def run(_sys_args):
         exit_prog(True)
 
     try:
-        conn = serial.Serial(port=port, baudrate=921600, inter_byte_timeout=0.1, timeout=0)
+        conn = serial.Serial(port=port, baudrate=115200, inter_byte_timeout=0.1, timeout=0)
     except ValueError as e:
         puts("Serial parameters out of range, with exception: " + str(e))
         exit_prog(True)

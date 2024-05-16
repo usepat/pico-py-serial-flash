@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from flasher.program import Image
 
 FLASH_BASE: int = 0x10000000
-FLASH_SIZE: int = 2 * 1024 * 1024
+FLASH_SIZE: int = 16 * 1024 * 1024
 
 
 def _is_in_flash(addr, size: int) -> bool:
