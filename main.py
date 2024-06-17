@@ -113,6 +113,7 @@ if __name__ == '__main__':
         run(sys_args)
         puts("\nJobs done. Pico should have rebooted into the flashed application.")
     except TypeError as err:
+        print(err)
         puts(usage_flasher())
     except OSError as err:
         puts("OS error: {0}".format(err))

@@ -2,7 +2,7 @@ import time
 import serial
 import binascii
 from flasher.util import debug, puts, exit_prog, hex_bytes_to_int, bytes_to_little_end_uint32, little_end_uint32_to_bytes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -20,6 +20,21 @@ class Protocol_RP2040:
     has_sync: bool = False
     wait_time_before_read = 0.05  # seconds
 
+    file_path: str = field(default="pico_log.txt")
+
+    def __post_init__(self):
+        self.file = open(self.file_path, 'a')
+
+    def __del__(self):
+        if self.file:
+            self.file.close()
+
+    def log_to_file(self, message: str):
+        message_str = message.decode('utf-8')  # Decode bytes to string
+        print(f'message: {message_str}')
+        self.file.write(message_str + "\n")
+        print("done")
+    
     Opcodes = {
         'Sync': bytes('SYNC', 'utf-8'),
         'Read': bytes('READ', 'utf-8'),
@@ -65,6 +80,7 @@ class Protocol_RP2040:
                 # conn.flushInput()
                 # conn.flushOutput()
                 debug("Starting sync command by sending: " + str(self.Opcodes["Sync"][:]))
+                self.log_to_file(self.Opcodes["Sync"][:])
                 conn.write(self.Opcodes["Sync"][:])
 
                 # Small sleep because else Python is too fast, and serial buffer will still be empty.
@@ -75,6 +91,7 @@ class Protocol_RP2040:
                     response += data_byte
 
                 debug("Whole response has arrived: " + str(response))
+                #file.write_new_line(str(response))
                 if response == self.Opcodes["ResponseSync"][:]:
                     puts("Found a Pico device who responded to sync.")
                     self.has_sync = True
@@ -90,9 +107,11 @@ class Protocol_RP2040:
 
     def info_cmd(self, conn: serial.Serial) -> PicoInfo:
         expected_len = len(self.Opcodes['ResponseOK']) + (4 * 5)
+        #file.write_new_line(self.Opcodes["Info"][:])
         conn.write(self.Opcodes["Info"][:])
         debug("Written following bytes to Pico: " + str(self.Opcodes["Info"][:]))
-        _, resp_ok_bytes = self.read_bootloader_resp(conn, expected_len, True)
+        all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, expected_len, True)
+        #file.write_new_line(all_bytes)
         decoded_arr = []
         if len(resp_ok_bytes) <= 0:
             puts("Something went horribly wrong. Please POR and retry.")
@@ -127,10 +146,12 @@ class Protocol_RP2040:
             b = bytes(missing_bits)
             write_buff += b
         # write_readable = hex_bytes_to_int(write_buff)
+        #file.write_new_line(write_buff)
         n = conn.write(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), True)
+        #file.write_new_line(all_bytes)
         debug("Erased a length of bytes, response is: " + str(all_bytes))
         if all_bytes != self.Opcodes['ResponseOK']:
             return False
@@ -149,10 +170,12 @@ class Protocol_RP2040:
             b = bytes(missing_bits)
             write_buff += b
         write_buff += data
+        #file.write_new_line(write_buff)
         n = conn.write(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']) + 4, True)
+        #file.write_new_line(all_bytes)
         debug("All bytes return from read: " + str(all_bytes))
         # all_bytes_readable = hex_bytes_to_int(all_bytes)
         resp_crc = bytes_to_little_end_uint32(data_bytes)
@@ -177,10 +200,12 @@ class Protocol_RP2040:
             write_buff += b
         write_buff += little_end_uint32_to_bytes(crc)
         wr_buff_read = hex_bytes_to_int(write_buff)
+        #file.write_new_line(write_buff)
         n = conn.write(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), False)
+        #file.write_new_line(all_bytes)
         debug("All bytes seal: " + str(all_bytes))
         if all_bytes[:4] != self.Opcodes['ResponseOK']:
             return False
@@ -190,13 +215,14 @@ class Protocol_RP2040:
         expected_bit_n = len(self.Opcodes['Go']) + 4
         write_buff = bytes()
         write_buff += self.Opcodes['Go'][:]
-        write_buff += little_end_uint32_to_bytes(addr)
+        write_buff += little_end_uint32_tto_bytes(addr)
         if len(write_buff) != expected_bit_n:
             missing_bits = expected_bit_n - len(write_buff)
             b = bytes(missing_bits)
             write_buff += b
         write_readable = hex_bytes_to_int(write_buff)
         n = conn.write(write_buff)
+        #file.write_new_line(write_buff)
 
         # Hopaatskeeeeee
 
