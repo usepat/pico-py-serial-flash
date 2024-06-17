@@ -20,20 +20,18 @@ class Protocol_RP2040:
     has_sync: bool = False
     wait_time_before_read = 0.05  # seconds
 
-    file_path: str = field(default="pico_log.txt")
+    file_path: str = field(default="pico_log.bin")
 
     def __post_init__(self):
-        self.file = open(self.file_path, 'a')
+        self.file = open(self.file_path, 'ab')  # Open the file in binary mode
 
     def __del__(self):
         if self.file:
             self.file.close()
 
-    def log_to_file(self, message: str):
-        message_str = message.decode('utf-8')  # Decode bytes to string
-        print(f'message: {message_str}')
-        self.file.write(message_str + "\n")
-        print("done")
+    def log_to_file(self, message: bytes):
+        self.file.write(message + b"\n")
+    
     
     Opcodes = {
         'Sync': bytes('SYNC', 'utf-8'),
@@ -91,6 +89,7 @@ class Protocol_RP2040:
                     response += data_byte
 
                 debug("Whole response has arrived: " + str(response))
+                self.log_to_file(response)
                 #file.write_new_line(str(response))
                 if response == self.Opcodes["ResponseSync"][:]:
                     puts("Found a Pico device who responded to sync.")
@@ -109,8 +108,10 @@ class Protocol_RP2040:
         expected_len = len(self.Opcodes['ResponseOK']) + (4 * 5)
         #file.write_new_line(self.Opcodes["Info"][:])
         conn.write(self.Opcodes["Info"][:])
+        self.log_to_file(self.Opcodes["Info"][:])
         debug("Written following bytes to Pico: " + str(self.Opcodes["Info"][:]))
         all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, expected_len, True)
+        self.log_to_file(all_bytes)
         #file.write_new_line(all_bytes)
         decoded_arr = []
         if len(resp_ok_bytes) <= 0:
@@ -148,10 +149,12 @@ class Protocol_RP2040:
         # write_readable = hex_bytes_to_int(write_buff)
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
+        self.log_to_file(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), True)
         #file.write_new_line(all_bytes)
+        self.log_to_file(all_bytes)
         debug("Erased a length of bytes, response is: " + str(all_bytes))
         if all_bytes != self.Opcodes['ResponseOK']:
             return False
@@ -172,10 +175,12 @@ class Protocol_RP2040:
         write_buff += data
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
+        self.log_to_file(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']) + 4, True)
         #file.write_new_line(all_bytes)
+        self.log_to_file(all_bytes)
         debug("All bytes return from read: " + str(all_bytes))
         # all_bytes_readable = hex_bytes_to_int(all_bytes)
         resp_crc = bytes_to_little_end_uint32(data_bytes)
@@ -202,10 +207,12 @@ class Protocol_RP2040:
         wr_buff_read = hex_bytes_to_int(write_buff)
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
+        self.log_to_file(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), False)
         #file.write_new_line(all_bytes)
+        self.log_to_file(all_bytes)
         debug("All bytes seal: " + str(all_bytes))
         if all_bytes[:4] != self.Opcodes['ResponseOK']:
             return False
@@ -215,13 +222,14 @@ class Protocol_RP2040:
         expected_bit_n = len(self.Opcodes['Go']) + 4
         write_buff = bytes()
         write_buff += self.Opcodes['Go'][:]
-        write_buff += little_end_uint32_tto_bytes(addr)
+        write_buff += little_end_uint32_to_bytes(addr)
         if len(write_buff) != expected_bit_n:
             missing_bits = expected_bit_n - len(write_buff)
             b = bytes(missing_bits)
             write_buff += b
         write_readable = hex_bytes_to_int(write_buff)
         n = conn.write(write_buff)
+        self.log_to_file(write_buff)
         #file.write_new_line(write_buff)
 
         # Hopaatskeeeeee
