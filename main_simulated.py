@@ -141,7 +141,7 @@ async def simulated_device(reader, writer):
             'size': None,
             'handle': lambda args, data: (
                 RSP_OK,
-                [0x10000000, len(flash_memory), 0x1000, 0x100, 0x100],
+                [write_addr_min, xip_base + len(flash_memory)- write_addr_min, 1 << 12, 1 << 8, 1024],
                 b''
             )
         },
@@ -161,7 +161,13 @@ async def simulated_device(reader, writer):
     def is_error(status):
         return status == RSP_ERR
 
+    header_offset = 28 * 1024
     flash_memory = bytearray(16 * 1024 * 1024)  # 16MB flash
+    xip_base = 0x10000000
+    flash_sector_size = 1 << 12
+    write_addr_min = (xip_base + header_offset + flash_sector_size)
+
+
 
     ctx = {
         'opcode': 0,
@@ -180,7 +186,7 @@ async def simulated_device(reader, writer):
         state = await states[state](ctx)
 
 async def run_flash_program(reader, writer, img):
-    await Program(reader, writer, Image(Addr=0x10000000, Data=img.Data), None)
+    await Program(reader, writer, img, None)
 
 async def main():
     if len(sys.argv) != 2:
@@ -189,7 +195,9 @@ async def main():
 
     elf_path = sys.argv[1]
     img = load_elf(elf_path)
-
+    debug("Returned .elf address: " + str(img.Addr) + " and data: " )#+ str(img.Data))
+    debug("ELF Image Data List Length: " + str(len(img.Data)))
+    debug("")
     server = await asyncio.start_server(simulated_device, '127.0.0.1', 8888)
     await asyncio.sleep(1)  # Give the server a moment to start
 

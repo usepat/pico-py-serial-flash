@@ -51,7 +51,7 @@ def run(_sys_args):
             puts(usage_flasher())
             exit_prog(True)
         img = load_elf(file_path)
-        #debug("Returned .elf address: " + str(img.Addr) + " and data: " + str(img.Data))
+        debug("Returned .elf address: " + str(img.Addr) + " and data: ")# + str(img.Data))
         debug("ELF Image Data List Length: " + str(len(img.Data)))
         debug("")
 

@@ -51,13 +51,13 @@ def Program(conn, image: Image, progress_bar):
         puts("Image of " + str(len(data)) + " bytes does not fit in target flash at: " + str(hex(image.Addr)))
         exit_prog(True)
 
-    puts("Starting erase.")
+    puts("Starting erase. at image address: " + str(image.Addr))
 
     # Check how many bytes we need to erase, and start erasing.
     erase_len = int(align(len(data), device_info.erase_size))
     for start in range(0, erase_len, device_info.erase_size):
-        debug("Erase: " + str(start))
         erase_addr = image.Addr + start
+        debug("Erase: " + str(erase_addr) + "size: " + str(device_info.erase_size))
         has_succeeded = protocol.erase_cmd(conn, erase_addr, device_info.erase_size)
         if not has_succeeded:
             puts("Error when erasing flash, at addr: " + str(erase_addr))

@@ -20,17 +20,51 @@ class Protocol_RP2040:
     has_sync: bool = False
     wait_time_before_read = 0.05  # seconds
 
-    file_path: str = field(default="pico_log.bin")
+    plc_output_bin: str = field(default="plc_output_real.bin")
+    plc_output_txt: str = field(default="plc_output_real.txt")
+    
+    device_output_bin: str = field(default="device_output_real.bin")
+    device_output_txt: str = field(default="device_output_real.txt")
+
+    plc_device_output_bin: str = field(default="plc_device_output_real.bin")
+    plc_device_output_txt: str = field(default="plc_device_output_real.txt")
 
     def __post_init__(self):
-        self.file = open(self.file_path, 'ab')  # Open the file in binary mode
+        self.plc_bin = open(self.plc_output_bin, 'wb')  # Open the file in binary mode
+        self.plc_txt = open(self.plc_output_txt, 'w')  # Open the file in binary mode
+        self.device_bin = open(self.device_output_bin, 'wb')  # Open the file in binary mode
+        self.device_txt = open(self.device_output_txt, 'w')  # Open the file in binary mode
+        self.plc_device_bin = open(self.plc_device_output_bin, 'wb')  # Open the file in binary mode
+        self.plc_device_txt = open(self.plc_device_output_txt, 'w')  # Open the file in binary mode
+
 
     def __del__(self):
-        if self.file:
-            self.file.close()
+        if self.plc_bin:
+            self.plc_bin.close()
+        if self.plc_txt:
+            self.plc_txt.close()
+        if self.device_bin:
+            self.device_bin.close()
+        if self.device_txt:
+            self.device_txt.close()
+        if self.plc_device_bin:
+            self.plc_device_bin.close()
+        if self.plc_device_txt:
+            self.plc_device_txt.close()
 
-    def log_to_file(self, message: bytes):
-        self.file.write(message + b"\n")
+    def log_device_plc_output(self, message: bytes):
+        self.plc_device_bin.write(message + b"\n")
+        self.plc_device_txt.write(str(message) + "\n")
+
+    def log_plc_output(self, message: bytes):
+        self.log_device_plc_output(message)
+        self.plc_bin.write(message + b"\n")
+        self.plc_txt.write(str(message) + "\n")
+
+    def log_device_output(self, message: bytes):
+        self.log_device_plc_output(message)
+        self.device_bin.write(message + b"\n")
+        self.device_txt.write(str(message) + "\n")
     
     
     Opcodes = {
@@ -78,7 +112,7 @@ class Protocol_RP2040:
                 # conn.flushInput()
                 # conn.flushOutput()
                 debug("Starting sync command by sending: " + str(self.Opcodes["Sync"][:]))
-                self.log_to_file(self.Opcodes["Sync"][:])
+                self.log_plc_output(self.Opcodes["Sync"])
                 conn.write(self.Opcodes["Sync"][:])
 
                 # Small sleep because else Python is too fast, and serial buffer will still be empty.
@@ -89,7 +123,7 @@ class Protocol_RP2040:
                     response += data_byte
 
                 debug("Whole response has arrived: " + str(response))
-                self.log_to_file(response)
+                self.log_device_output(response)
                 #file.write_new_line(str(response))
                 if response == self.Opcodes["ResponseSync"][:]:
                     puts("Found a Pico device who responded to sync.")
@@ -108,10 +142,10 @@ class Protocol_RP2040:
         expected_len = len(self.Opcodes['ResponseOK']) + (4 * 5)
         #file.write_new_line(self.Opcodes["Info"][:])
         conn.write(self.Opcodes["Info"][:])
-        self.log_to_file(self.Opcodes["Info"][:])
+        self.log_plc_output(self.Opcodes["Info"][:])
         debug("Written following bytes to Pico: " + str(self.Opcodes["Info"][:]))
         all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, expected_len, True)
-        self.log_to_file(all_bytes)
+        self.log_device_output(all_bytes)
         #file.write_new_line(all_bytes)
         decoded_arr = []
         if len(resp_ok_bytes) <= 0:
@@ -149,12 +183,12 @@ class Protocol_RP2040:
         # write_readable = hex_bytes_to_int(write_buff)
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
-        self.log_to_file(write_buff)
+        self.log_plc_output(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, resp_ok_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), True)
         #file.write_new_line(all_bytes)
-        self.log_to_file(all_bytes)
+        self.log_device_output(all_bytes)
         debug("Erased a length of bytes, response is: " + str(all_bytes))
         if all_bytes != self.Opcodes['ResponseOK']:
             return False
@@ -175,12 +209,12 @@ class Protocol_RP2040:
         write_buff += data
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
-        self.log_to_file(write_buff)
+        self.log_plc_output(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']) + 4, True)
         #file.write_new_line(all_bytes)
-        self.log_to_file(all_bytes)
+        self.log_device_output(all_bytes)
         debug("All bytes return from read: " + str(all_bytes))
         # all_bytes_readable = hex_bytes_to_int(all_bytes)
         resp_crc = bytes_to_little_end_uint32(data_bytes)
@@ -207,12 +241,12 @@ class Protocol_RP2040:
         wr_buff_read = hex_bytes_to_int(write_buff)
         #file.write_new_line(write_buff)
         n = conn.write(write_buff)
-        self.log_to_file(write_buff)
+        self.log_plc_output(write_buff)
         debug("Number of bytes written: " + str(n))
         time.sleep(self.wait_time_before_read)
         all_bytes, data_bytes = self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), False)
         #file.write_new_line(all_bytes)
-        self.log_to_file(all_bytes)
+        self.log_device_output(all_bytes)
         debug("All bytes seal: " + str(all_bytes))
         if all_bytes[:4] != self.Opcodes['ResponseOK']:
             return False
@@ -229,7 +263,7 @@ class Protocol_RP2040:
             write_buff += b
         write_readable = hex_bytes_to_int(write_buff)
         n = conn.write(write_buff)
-        self.log_to_file(write_buff)
+        self.log_plc_output(write_buff)
         #file.write_new_line(write_buff)
 
         # Hopaatskeeeeee
