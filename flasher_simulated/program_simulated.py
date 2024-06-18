@@ -20,18 +20,18 @@ def align(val, to):
     return (val + (to - 1)) & ~(to - 1)
 
 
-async def Program(conn, image: Image, progress_bar):
+async def Program(reader, writer, image: Image, progress_bar):
     # Normal RP2040 (not wireless) protocol
     protocol = Protocol_RP2040()
 
     # Check if there is a Pico device connected, ready to be flashed
-    has_sync = await protocol.sync_cmd(conn=conn)
+    has_sync = await protocol.sync_cmd(reader, writer)
     if not has_sync:
         puts("No Pico device to get in sync with.")
         exit_prog()
 
     # Receive information about flash size, and address offsets
-    device_info = await protocol.info_cmd(conn=conn)
+    device_info = await protocol.info_cmd(reader, writer)
 
     # Pad the image data message
     pad_len = align(int(len(image.Data)), device_info.write_size) - int(len(image.Data))
@@ -56,7 +56,7 @@ async def Program(conn, image: Image, progress_bar):
     for start in range(0, erase_len, device_info.erase_size):
         debug("Erase: " + str(start))
         erase_addr = image.Addr + start
-        has_succeeded = await protocol.erase_cmd(conn, erase_addr, device_info.erase_size)
+        has_succeeded = await protocol.erase_cmd(reader, writer, erase_addr, device_info.erase_size)
         if not has_succeeded:
             puts("Error when erasing flash, at addr: " + str(erase_addr))
             exit_prog(True)
@@ -73,7 +73,7 @@ async def Program(conn, image: Image, progress_bar):
         wr_addr = image.Addr + start
         wr_len = end - start
         wr_data = data[start:end]
-        crc_valid = await protocol.write_cmd(conn, wr_addr, wr_len, wr_data)
+        crc_valid = await protocol.write_cmd(reader, writer, wr_addr, wr_len, wr_data)
         if not crc_valid:
             puts("CRC mismatch! Exiting.")
             exit_prog(False)
@@ -81,12 +81,12 @@ async def Program(conn, image: Image, progress_bar):
     puts("Flashing completed.")
 
     puts("Adding seal to finalize.")
-    has_sealed = await protocol.seal_cmd(conn, image.Addr, data)
+    has_sealed = await protocol.seal_cmd(reader, writer, image.Addr, data)
     debug("Has sealed: " + str(has_sealed))
     if not has_sealed:
         puts("Sealing failed. Exiting.")
         exit_prog(False)
 
-    await protocol.go_to_application_cmd(conn, image.Addr)
+    await protocol.go_to_application_cmd(reader, writer, image.Addr)
 
     debug("Program is done.")

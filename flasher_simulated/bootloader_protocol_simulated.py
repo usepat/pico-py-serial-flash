@@ -22,42 +22,76 @@ class Protocol_RP2040:
     has_sync: bool = False
     wait_time_before_read: float = 0.05  # seconds
 
-    file_path: str = field(default="pico_log.bin")
+    plc_output_bin: str = field(default="plc_output.bin")
+    plc_output_txt: str = field(default="plc_output.txt")
+    
+    device_output_bin: str = field(default="device_output.bin")
+    device_output_txt: str = field(default="device_output.txt")
+
+    plc_device_output_bin: str = field(default="plc_device_output.bin")
+    plc_device_output_txt: str = field(default="plc_device_output.txt")
 
     def __post_init__(self):
-        self.file = open(self.file_path, 'ab')  # Open the file in binary mode
+        self.plc_bin = open(self.plc_output_bin, 'wb')  # Open the file in binary mode
+        self.plc_txt = open(self.plc_output_txt, 'w')  # Open the file in binary mode
+        self.device_bin = open(self.device_output_bin, 'wb')  # Open the file in binary mode
+        self.device_txt = open(self.device_output_txt, 'w')  # Open the file in binary mode
+        self.plc_device_bin = open(self.plc_device_output_bin, 'wb')  # Open the file in binary mode
+        self.plc_device_txt = open(self.plc_device_output_txt, 'w')  # Open the file in binary mode
+
 
     def __del__(self):
-        if self.file:
-            self.file.close()
+        if self.plc_bin:
+            self.plc_bin.close()
+        if self.plc_txt:
+            self.plc_txt.close()
+        if self.device_bin:
+            self.device_bin.close()
+        if self.device_txt:
+            self.device_txt.close()
+        if self.plc_device_bin:
+            self.plc_device_bin.close()
+        if self.plc_device_txt:
+            self.plc_device_txt.close()
 
-    def log_to_file(self, message: bytes):
-        self.file.write(message + b"\n")
+    def log_device_plc_output(self, message: bytes):
+        self.plc_device_bin.write(message + b"\n")
+        self.plc_device_txt.write(str(message) + "\n")
+
+    def log_plc_output(self, message: bytes):
+        self.log_device_plc_output(message)
+        self.plc_bin.write(message + b"\n")
+        self.plc_txt.write(str(message) + "\n")
+
+    def log_device_output(self, message: bytes):
+        self.log_device_plc_output(message)
+        self.device_bin.write(message + b"\n")
+        self.device_txt.write(str(message) + "\n")
 
     Opcodes = {
-        'Sync': bytes('SYNC', 'utf-8'),
-        'Read': bytes('READ', 'utf-8'),
-        'Csum': bytes('CSUM', 'utf-8'),
-        'CRC': bytes('CRCC', 'utf-8'),
-        'Erase': bytes('ERAS', 'utf-8'),
-        'Write': bytes('WRIT', 'utf-8'),
-        'Seal': bytes('SEAL', 'utf-8'),
-        'Go': bytes('GOGO', 'utf-8'),
-        'Info': bytes('INFO', 'utf-8'),
-        'ResponseSync': bytes('PICO', 'utf-8'),
-        'ResponseSyncWota': bytes('WOTA', 'utf-8'),
-        'ResponseOK': bytes('OKOK', 'utf-8'),
-        'ResponseErr': bytes('ERR!', 'utf-8')
+        'Sync': b'SYNC',
+        'Read': b'READ',
+        'Csum': b'CSUM',
+        'CRC': b'CRCC',
+        'Erase': b'ERAS',
+        'Write': b'WRIT',
+        'Seal': b'SEAL',
+        'Go': b'GOGO',
+        'Info': b'INFO',
+        'ResponseSync': b'PICO',
+        'ResponseSyncWota': b'WOTA',
+        'ResponseOK': b'OKOK',
+        'ResponseErr': b'ERR!',
     }
 
-    async def read_bootloader_resp(self, conn, response_len: int, exit_before_flash=True) -> (bytes, bytes):
+    async def read_bootloader_resp(self, reader, response_len: int, exit_before_flash=True) -> (bytes, bytes):
         await asyncio.sleep(self.wait_time_before_read)
         debug("Start blocking code reponse length is hit. Resp_len: " + str(response_len))
-        all_bytes = await conn.read(response_len)
-        err_byte = all_bytes.removeprefix(self.Opcodes["ResponseErr"][:])
+        all_bytes = await reader.read(response_len)
+        err_byte = all_bytes.removeprefix(self.Opcodes["ResponseErr"])
         data_bytes = bytes()
         if len(err_byte) == response_len:
-            data_bytes = all_bytes.removeprefix((self.Opcodes["ResponseOK"][:]))
+            data_bytes = all_bytes.removeprefix(self.Opcodes["ResponseOK"])
             debug("No error encoutered")
         else:
             puts("Error encoutered in RPi Pico! Please POR your Pico and try again.")
@@ -68,23 +102,22 @@ class Protocol_RP2040:
         debug("Len Data buff: " + str(len(data_bytes)))
         return all_bytes, data_bytes
 
-    async def sync_cmd(self, conn) -> bool:
+    async def sync_cmd(self, reader, writer) -> bool:
         for i in range(1, self.MAX_SYNC_ATTEMPTS + 1):
             response = bytes()
             try:
-                debug("Starting sync command by sending: " + str(self.Opcodes["Sync"][:]))
-                self.log_to_file(self.Opcodes["Sync"][:])
-                conn.write(self.Opcodes["Sync"][:])
+                debug("Starting sync command by sending: " + str(self.Opcodes["Sync"]))
+                self.log_plc_output(self.Opcodes["Sync"])
+                writer.write(self.Opcodes["Sync"])
+                await writer.drain()
 
                 await asyncio.sleep(self.wait_time_before_read)
                 debug("Have send Sync command, start reading response")
-                while conn.in_waiting > 0:
-                    data_byte = await conn.read(conn.in_waiting)
-                    response += data_byte
+                response = await reader.read(4)
 
                 debug("Whole response has arrived: " + str(response))
-                self.log_to_file(response)
-                if response == self.Opcodes["ResponseSync"][:]:
+                self.log_device_output(response)
+                if response == self.Opcodes["ResponseSync"]:
                     puts("Found a Pico device who responded to sync.")
                     self.has_sync = True
                     return self.has_sync
@@ -95,13 +128,14 @@ class Protocol_RP2040:
                 puts("Serial timeout expired.")
                 exit_prog(True)
 
-    async def info_cmd(self, conn) -> PicoInfo:
+    async def info_cmd(self, reader, writer) -> PicoInfo:
         expected_len = len(self.Opcodes['ResponseOK']) + (4 * 5)
-        conn.write(self.Opcodes["Info"][:])
-        self.log_to_file(self.Opcodes["Info"][:])
-        debug("Written following bytes to Pico: " + str(self.Opcodes["Info"][:]))
-        all_bytes, resp_ok_bytes = await self.read_bootloader_resp(conn, expected_len, True)
-        self.log_to_file(all_bytes)
+        writer.write(self.Opcodes["Info"])
+        await writer.drain()
+        self.log_plc_output(self.Opcodes["Info"])
+        debug("Written following bytes to Pico: " + str(self.Opcodes["Info"]))
+        all_bytes, resp_ok_bytes = await self.read_bootloader_resp(reader, expected_len, True)
+        self.log_device_output(all_bytes)
         decoded_arr = []
         if len(resp_ok_bytes) <= 0:
             puts("Something went horribly wrong. Please POR and retry.")
@@ -125,31 +159,32 @@ class Protocol_RP2040:
 
         return this_pico_info
 
-    async def erase_cmd(self, conn, addr, length) -> bool:
+    async def erase_cmd(self, reader, writer, addr, length) -> bool:
         expected_bit_n = 3 * 4
         write_buff = bytes()
-        write_buff += self.Opcodes['Erase'][:]
+        write_buff += self.Opcodes['Erase']
         write_buff += little_end_uint32_to_bytes(addr)
         write_buff += little_end_uint32_to_bytes(length)
         if len(write_buff) != expected_bit_n:
             missing_bits = expected_bit_n - len(write_buff)
             b = bytes(missing_bits)
             write_buff += b
-        n = conn.write(write_buff)
-        self.log_to_file(write_buff)
-        debug("Number of bytes written: " + str(n))
+        writer.write(write_buff)
+        await writer.drain()
+        self.log_plc_output(write_buff)
+        debug("Number of bytes written: " + str(len(write_buff)))
         await asyncio.sleep(self.wait_time_before_read)
-        all_bytes, resp_ok_bytes = await self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), True)
-        self.log_to_file(all_bytes)
+        all_bytes, resp_ok_bytes = await self.read_bootloader_resp(reader, len(self.Opcodes['ResponseOK']), True)
+        self.log_device_output(all_bytes)
         debug("Erased a length of bytes, response is: " + str(all_bytes))
         if all_bytes != self.Opcodes['ResponseOK']:
             return False
         return True
 
-    async def write_cmd(self, conn, addr, length, data):
+    async def write_cmd(self, reader, writer, addr, length, data):
         expected_bit_n_no_data = len(self.Opcodes['Write']) + 4 + 4
         write_buff = bytes()
-        write_buff += self.Opcodes['Write'][:]
+        write_buff += self.Opcodes['Write']
         write_buff += little_end_uint32_to_bytes(addr)
         write_buff += little_end_uint32_to_bytes(length)
         len_before_data = len(write_buff)
@@ -158,12 +193,13 @@ class Protocol_RP2040:
             b = bytes(missing_bits)
             write_buff += b
         write_buff += data
-        n = conn.write(write_buff)
-        self.log_to_file(write_buff)
-        debug("Number of bytes written: " + str(n))
+        writer.write(write_buff)
+        await writer.drain()
+        self.log_plc_output(write_buff)
+        debug("Number of bytes written: " + str(len(write_buff)))
         await asyncio.sleep(self.wait_time_before_read)
-        all_bytes, data_bytes = await self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']) + 4, True)
-        self.log_to_file(all_bytes)
+        all_bytes, data_bytes = await self.read_bootloader_resp(reader, len(self.Opcodes['ResponseOK']) + 4, True)
+        self.log_device_output(all_bytes)
         debug("All bytes return from read: " + str(all_bytes))
         resp_crc = bytes_to_little_end_uint32(data_bytes)
         calc_crc = binascii.crc32(data)
@@ -172,12 +208,12 @@ class Protocol_RP2040:
             return False
         return True
 
-    async def seal_cmd(self, conn, addr, data):
+    async def seal_cmd(self, reader, writer, addr, data):
         expected_bits_before_crc = len(self.Opcodes['Seal']) + 4 + 4
         data_length = len(data)
         crc = binascii.crc32(data)
         write_buff = bytes()
-        write_buff += self.Opcodes['Seal'][:]
+        write_buff += self.Opcodes['Seal']
         write_buff += little_end_uint32_to_bytes(addr)
         write_buff += little_end_uint32_to_bytes(data_length)
         len_before_data = len(write_buff)
@@ -187,27 +223,29 @@ class Protocol_RP2040:
             write_buff += b
         write_buff += little_end_uint32_to_bytes(crc)
         wr_buff_read = hex_bytes_to_int(write_buff)
-        n = conn.write(write_buff)
-        self.log_to_file(write_buff)
-        debug("Number of bytes written: " + str(n))
+        writer.write(write_buff)
+        await writer.drain()
+        self.log_plc_output(write_buff)
+        debug("Number of bytes written: " + str(len(write_buff)))
         await asyncio.sleep(self.wait_time_before_read)
-        all_bytes, data_bytes = await self.read_bootloader_resp(conn, len(self.Opcodes['ResponseOK']), False)
-        self.log_to_file(all_bytes)
+        all_bytes, data_bytes = await self.read_bootloader_resp(reader, len(self.Opcodes['ResponseOK']), False)
+        self.log_device_output(all_bytes)
         debug("All bytes seal: " + str(all_bytes))
         if all_bytes[:4] != self.Opcodes['ResponseOK']:
             return False
         return True
 
-    async def go_to_application_cmd(self, conn, addr):
+    async def go_to_application_cmd(self, reader, writer, addr):
         expected_bit_n = len(self.Opcodes['Go']) + 4
         write_buff = bytes()
-        write_buff += self.Opcodes['Go'][:]
+        write_buff += self.Opcodes['Go']
         write_buff += little_end_uint32_to_bytes(addr)
         if len(write_buff) != expected_bit_n:
             missing_bits = expected_bit_n - len(write_buff)
             b = bytes(missing_bits)
             write_buff += b
         write_readable = hex_bytes_to_int(write_buff)
-        n = conn.write(write_buff)
-        self.log_to_file(write_buff)
+        self.log_plc_output(write_buff)
+        writer.write(write_buff)
+        await writer.drain()
         debug("Go.")

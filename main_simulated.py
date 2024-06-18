@@ -1,112 +1,202 @@
 import sys
-import traceback
 import os
 import asyncio
-import serial_asyncio
-from flasher_simulated.elf import load_elf
-from flasher_simulated.util import debug, puts, usage_flasher, exit_prog
+import binascii
+from flasher.elf import load_elf
+from flasher.util import debug, puts, usage_flasher, exit_prog
 from flasher_simulated.program_simulated import Image, Program
-import serial
 
+async def simulated_device(reader, writer):
+    async def usb_read_blocking(length):
+        return await reader.readexactly(length)
 
-# Called at start of main(), to catch program arguments and respond accordingly.
-def handle_args():
-    _sys_args = sys.argv[1:]
-    debug("All args: " + str(_sys_args))
-    debug("Len args: " + str(len(_sys_args)))
-    if len(_sys_args) != 1:
-        return -1
-    else:
-        return _sys_args
+    async def usb_write_blocking(data):
+        writer.write(data)
+        await writer.drain()
 
+    async def state_wait_for_sync(ctx):
+        idx = 0
+        recv = bytearray(4)
+        match = b'SYNC'
 
-# Runs the flasher program
-async def run(_sys_args):
-    global bin_found, img
-    if _sys_args == -1:
-        puts(usage_flasher())
-        exit_prog(True)
+        while idx < 4:
+            recv[idx:idx + 1] = await usb_read_blocking(1)
+            if recv[idx:idx + 1] != match[idx:idx + 1]:
+                idx = 0
+            else:
+                idx += 1
 
-    file_path = str(_sys_args[0])
-    filename, file_extension = os.path.splitext(file_path)
+        ctx['opcode'] = int.from_bytes(recv, 'little')
+        await usb_write_blocking(b'PICO')
+        return 'READ_OPCODE'
 
-    if file_extension == ".elf":
-        debug("Elf found!: " + str(file_extension))
-        img = load_elf(file_path)
-        debug("ELF Image Data List Length: " + str(len(img.Data)))
-        debug("")
-    else:
-        puts("Incorrect file extension. Currently supported extensions are: '.elf'.")
-        exit_prog(True)
+    async def state_read_opcode(ctx):
+        ctx['opcode'] = int.from_bytes(await usb_read_blocking(4), 'little')
+        return 'READ_ARGS'
 
-    conn = None
+    async def state_read_args(ctx):
+        desc = next((cmd for cmd in cmds if cmd['opcode'] == ctx['opcode']), None)
+        if not desc:
+            ctx['status'] = RSP_ERR
+            return 'ERROR'
+        
+        ctx['desc'] = desc
+        ctx['args'] = [int.from_bytes(await usb_read_blocking(4), 'little') for _ in range(desc['nargs'])]
+        ctx['data'] = bytearray()
+        return 'READ_DATA'
 
-    if img.Data is None or img.Addr <= -1:
-        puts("Image file has not been read correctly.")
-        exit_prog(True)
+    async def state_read_data(ctx):
+        desc = ctx['desc']
+        if desc['size']:
+            ctx['status'], ctx['data_len'], ctx['resp_data_len'] = desc['size'](ctx['args'])
+            if is_error(ctx['status']):
+                return 'ERROR'
+        else:
+            ctx['data_len'] = 0
+            ctx['resp_data_len'] = 0
+        
+        if ctx['data_len']:
+            ctx['data'] = await usb_read_blocking(ctx['data_len'])
+        return 'HANDLE_DATA'
 
-    try:
-        loop = asyncio.get_running_loop()
-        conn, protocol = await serial_asyncio.create_serial_connection(loop, SerialProtocol, '127.0.0.1', 8888)
-    except ValueError as e:
-        puts("Serial parameters out of range, with exception: " + str(e))
-        exit_prog(True)
-    except serial.SerialException as s_e:
-        puts("Serial Exception. Serial port probably not available: " + str(s_e))
-        exit_prog(True)
+    async def state_handle_data(ctx):
+        desc = ctx['desc']
+        if desc['handle']:
+            ctx['status'], ctx['resp_args'], ctx['resp_data'] = desc['handle'](ctx['args'], ctx['data'])
+            if is_error(ctx['status']):
+                return 'ERROR'
+        else:
+            ctx['status'] = RSP_OK
+        
+        resp = ctx['status'].to_bytes(4, 'little')
+        for arg in ctx['resp_args']:
+            resp += arg.to_bytes(4, 'little')
+        resp += ctx['resp_data']
+        await usb_write_blocking(resp)
+        if ctx['opcode'] == int.from_bytes(b'GOGO', 'little'):
+            os._exit(0)
+        return 'READ_OPCODE'
 
-    puts("Image file has been read correctly.")
-    await Program(protocol, img, None)
+    async def state_error(ctx):
+        await usb_write_blocking(ctx['status'].to_bytes(4, 'little'))
+        return 'WAIT_FOR_SYNC'
 
-    conn.close()
+    states = {
+        'WAIT_FOR_SYNC': state_wait_for_sync,
+        'READ_OPCODE': state_read_opcode,
+        'READ_ARGS': state_read_args,
+        'READ_DATA': state_read_data,
+        'HANDLE_DATA': state_handle_data,
+        'ERROR': state_error,
+    }
 
+    cmds = [
+        {
+            'opcode': int.from_bytes(b'SYNC', 'little'),
+            'nargs': 0,
+            'resp_nargs': 0,
+            'size': None,
+            'handle': lambda args, data: (RSP_SYNC, [], b'')
+        },
+        {
+            'opcode': int.from_bytes(b'READ', 'little'),
+            'nargs': 2,
+            'resp_nargs': 0,
+            'size': lambda args: (RSP_OK, 0, args[1]),
+            'handle': lambda args, data: (RSP_OK, [], flash_memory[args[0]:args[0]+args[1]])
+        },
+        {
+            'opcode': int.from_bytes(b'ERAS', 'little'),
+            'nargs': 2,
+            'resp_nargs': 0,
+            'size': None,
+            'handle': lambda args, data: (
+                RSP_OK,
+                [],
+                (flash_memory.__setitem__(slice(args[0], args[0] + args[1]), b'\xff' * args[1]) or b'')
+            )
+        },
+        {
+            'opcode': int.from_bytes(b'WRIT', 'little'),
+            'nargs': 2,
+            'resp_nargs': 1,
+            'size': lambda args: (RSP_OK, args[1], 0),
+            'handle': lambda args, data: (
+                RSP_OK,
+                [binascii.crc32(data)],
+                (flash_memory[args[0]:args[0]+args[1]] == data and b'') or (flash_memory.__setitem__(slice(args[0], args[0]+args[1]), data) or b'')
+            )
+        },
+        {
+            'opcode': int.from_bytes(b'SEAL', 'little'),
+            'nargs': 3,
+            'resp_nargs': 0,
+            'size': None,
+            'handle': lambda args, data: (RSP_OK, [], b'')
+        },
+        {
+            'opcode': int.from_bytes(b'INFO', 'little'),
+            'nargs': 0,
+            'resp_nargs': 5,
+            'size': None,
+            'handle': lambda args, data: (
+                RSP_OK,
+                [0x10000000, len(flash_memory), 0x1000, 0x100, 0x100],
+                b''
+            )
+        },
+        {
+            'opcode': int.from_bytes(b'GOGO', 'little'),
+            'nargs': 0,
+            'resp_nargs': 0,
+            'size': None,
+            'handle': lambda args, data: (RSP_OK, [], b'')
+        },
+    ]
 
-class SerialProtocol(asyncio.Protocol):
-    def __init__(self):
-        self.buffer = bytearray()
-        self.transport = None
+    RSP_SYNC = int.from_bytes(b'PICO', 'little')
+    RSP_OK = int.from_bytes(b'OKOK', 'little')
+    RSP_ERR = int.from_bytes(b'ERR!', 'little')
 
-    def connection_made(self, transport):
-        self.transport = transport
+    def is_error(status):
+        return status == RSP_ERR
 
-    def data_received(self, data):
-        self.buffer.extend(data)
+    flash_memory = bytearray(16 * 1024 * 1024)  # 16MB flash
 
-    def write(self, data):
-        if self.transport is not None:
-            self.transport.write(data)
+    ctx = {
+        'opcode': 0,
+        'status': 0,
+        'desc': None,
+        'args': [],
+        'data': bytearray(),
+        'resp_args': [],
+        'resp_data': bytearray(),
+        'data_len': 0,
+        'resp_data_len': 0,
+    }
+    state = 'WAIT_FOR_SYNC'
 
-    async def read(self, n=-1):
-        while len(self.buffer) < n:
-            await asyncio.sleep(0.01)
-        data = self.buffer[:n]
-        self.buffer = self.buffer[n:]
-        return data
+    while True:
+        state = await states[state](ctx)
 
-    @property
-    def in_waiting(self):
-        return len(self.buffer)
+async def run_flash_program(reader, writer, img):
+    await Program(reader, writer, Image(Addr=0x10000000, Data=img.Data), None)
 
+async def main():
+    if len(sys.argv) != 2:
+        print("Usage: main_simulated.py <path to ELF file>")
+        sys.exit(1)
 
-# Module level global definitions
-bin_found: bool = False
-img: Image
+    elf_path = sys.argv[1]
+    img = load_elf(elf_path)
 
-# Main of the program, handles args and captures the run function in try except clauses
-# to be able to easily catch errors
+    server = await asyncio.start_server(simulated_device, '127.0.0.1', 8888)
+    await asyncio.sleep(1)  # Give the server a moment to start
+
+    device_reader, device_writer = await asyncio.open_connection('127.0.0.1', 8888)
+    flash_task = asyncio.create_task(run_flash_program(device_reader, device_writer, img))
+
+    await flash_task
+
 if __name__ == '__main__':
-    sys_args = handle_args()
-    try:
-        asyncio.run(run(sys_args))
-        puts("\nJobs done. Pico should have rebooted into the flashed application.")
-    except TypeError as err:
-        print(err)
-        puts(usage_flasher())
-    except OSError as err:
-        puts("OS error: {0}".format(err))
-    except ValueError as err:
-        puts("Value error, with error: " + str(err))
-    except Exception:
-        puts("Unexpected error: ", sys.exc_info()[0])
-        puts(traceback.print_exc())
-        raise
+    asyncio.run(main())
