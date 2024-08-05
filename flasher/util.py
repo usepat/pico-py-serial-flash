@@ -1,6 +1,6 @@
 # Returns flasher usage message.
 import struct
-
+import zlib
 
 def usage_flasher():
     return str("Usage: main.py port filepath [BASE_ADDR] \nFor example: main.py /dev/ttyUSB0 ~/pico/test.elf")
@@ -41,6 +41,12 @@ def bytes_to_little_end_uint32(b: bytes):
 
 def little_end_uint32_to_bytes(v: int):
     return v.to_bytes((v.bit_length() + 7) // 8, 'little')
+
+def custom_crc32(data, initial=0xFFFFFFFF):
+    crc = zlib.crc32(data, initial) ^ 0xFFFFFFFF
+    # Reverse the bits of the result for output compatibility if needed
+    reversed_crc = int('{:032b}'.format(crc)[::-1], 2)
+    return reversed_crc
 
 
 # Print iterations progress

@@ -1,7 +1,7 @@
 import time
 import serial
 import binascii
-from flasher.util import debug, puts, exit_prog, hex_bytes_to_int, bytes_to_little_end_uint32, little_end_uint32_to_bytes
+from flasher.util import debug, puts, exit_prog, hex_bytes_to_int, bytes_to_little_end_uint32, little_end_uint32_to_bytes, custom_crc32
 from dataclasses import dataclass, field
 
 
@@ -57,14 +57,16 @@ class Protocol_RP2040:
         self.plc_device_txt.write(str(message) + "\n")
 
     def log_plc_output(self, message: bytes):
-        self.log_device_plc_output(message)
+        pass
+        # self.log_device_plc_output(message)
         self.plc_bin.write(message + b"\n")
         self.plc_txt.write(str(message) + "\n")
 
     def log_device_output(self, message: bytes):
-        self.log_device_plc_output(message)
-        self.device_bin.write(message + b"\n")
-        self.device_txt.write(str(message) + "\n")
+        pass
+        # self.log_device_plc_output(message)
+        # self.device_bin.write(message + b"\n")
+        # self.device_txt.write(str(message) + "\n")
     
     
     Opcodes = {
@@ -88,6 +90,7 @@ class Protocol_RP2040:
         time.sleep(self.wait_time_before_read)
         debug("Start blocking code reponse length is hit. Resp_len: " + str(response_len))
         all_bytes = conn.read(response_len)
+        print(all_bytes)
         err_byte = all_bytes.removeprefix(self.Opcodes["ResponseErr"][:])
         data_bytes = bytes()
         if len(err_byte) == response_len:
@@ -228,18 +231,26 @@ class Protocol_RP2040:
         expected_bits_before_crc = len(self.Opcodes['Seal']) + 4 + 4
         data_length = len(data)
         crc = binascii.crc32(data)
+        #crc = custom_crc32(data)
         write_buff = bytes()
         write_buff += self.Opcodes['Seal'][:]
+        print(write_buff)
         write_buff += little_end_uint32_to_bytes(addr)
+        print(write_buff)
+        print(data_length)
+        print(little_end_uint32_to_bytes(data_length))
         write_buff += little_end_uint32_to_bytes(data_length)
+        print(write_buff)
         len_before_data = len(write_buff)
         if len_before_data != expected_bits_before_crc:
             missing_bits = expected_bits_before_crc - len_before_data
             b = bytes(missing_bits)
             write_buff += b
+        print(write_buff)
         write_buff += little_end_uint32_to_bytes(crc)
         wr_buff_read = hex_bytes_to_int(write_buff)
         #file.write_new_line(write_buff)
+        print(write_buff)
         n = conn.write(write_buff)
         self.log_plc_output(write_buff)
         debug("Number of bytes written: " + str(n))
